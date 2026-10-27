@@ -1,0 +1,28 @@
+{
+  "name": "WF#7 - Deal Risk Human Review Gate",
+  "nodes": [
+    {
+      "parameters": {"inputSource": "passthrough"},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [-320, 0],
+      "id": "review-input-trigger",
+      "name": "Scenario In"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This stage intentionally does not approve, reject, or contact a seller.\n// It prepares an auditable review payload for Notion, Airtable, Slack, or a human queue.\nconst deal = $input.item.json;\nconst highRisks = (deal.riskRegister || []).filter(r => r.severity === 'high');\nconst nextStatus = highRisks.length ? 'Escalated Review' : 'Under Review';\nconst reviewChecklist = [\n  'Verify property-specific comparable sales and ARV',\n  'Verify rehab scope with contractor estimates',\n  'Verify taxes, insurance, HOA, and financing assumptions',\n  'Confirm strategy-specific metrics and downside scenario',\n  'Record a human approval or rejection with rationale',\n];\nreturn { json: { ...deal, reviewStatus: nextStatus, humanReviewRequired: true, reviewChecklist, reviewSummary: { recommendation: deal.recommendation, highRiskCount: highRisks.length, riskCodes: (deal.riskRegister || []).map(r => r.code), scenarioSummary: (deal.scenarios || []).map(s => ({ name: s.name, netEquitySpread: s.netEquitySpread, capRate: s.capRate, dscr: s.dscr })) }, auditTrail: [...(deal.auditTrail || []), { stage: 'human_review_gate', at: new Date().toISOString(), status: nextStatus, automatedDecision: 'none' }] } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "review-payload-code",
+      "name": "Prepare Review Queue Payload"
+    }
+  ],
+  "connections": {
+    "Scenario In": {"main": [[{"node": "Prepare Review Queue Payload", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"}
+}

@@ -1,0 +1,28 @@
+{
+  "name": "WF#6 - Deal Risk Scenario & Risk Engine",
+  "nodes": [
+    {
+      "parameters": {"inputSource": "passthrough"},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [-320, 0],
+      "id": "scenario-input-trigger",
+      "name": "Math In"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deal Risk: deterministic scenario, rental metrics, and explainable risk flags.\nconst deal = $input.item.json;\n\nconst num = (value, fallback = 0) => { const n = Number(value); return Number.isFinite(n) ? n : fallback; };\nconst clamp = (value, min, max) => Math.max(min, Math.min(max, value));\nconst strategy = String(deal.strategyMode || 'fix_and_flip').toLowerCase();\nconst monthlyRent = num(deal.monthlyRent);\nconst annualTaxes = num(deal.annualTaxes, Math.round(num(deal.askingPrice) * 0.012));\nconst annualInsurance = num(deal.annualInsurance, Math.round(num(deal.askingPrice) * 0.006));\nconst monthlyHoa = num(deal.monthlyHoa);\nconst vacancyPct = clamp(num(deal.vacancyPct, 0.08), 0, 0.35);\nconst maintenancePct = clamp(num(deal.maintenancePct, 0.08), 0, 0.30);\nconst holdingMonths = Math.max(1, num(deal.holdingMonths, 6));\nconst arv = num(deal.arvEstimate);\nconst repairs = num(deal.repairEstimate);\nconst purchase = num(deal.maxOffer || deal.askingPrice);\nconst loanAmount = num(deal.loanAmount);\nconst monthlyPI = num(deal.monthlyPI);\nconst annualGrossRent = monthlyRent * 12;\nconst effectiveGrossIncome = annualGrossRent * (1 - vacancyPct);\nconst annualOperatingExpenses = annualTaxes + annualInsurance + monthlyHoa * 12 + annualGrossRent * maintenancePct;\nconst noi = Math.round(effectiveGrossIncome - annualOperatingExpenses);\nconst capRate = purchase > 0 ? Number((noi / purchase * 100).toFixed(2)) : null;\nconst annualDebtService = monthlyPI * 12;\nconst dscr = annualDebtService > 0 ? Number((noi / annualDebtService).toFixed(2)) : null;\nconst annualCashFlow = Math.round(noi - annualDebtService);\nconst cashInvested = Math.max(1, purchase - loanAmount + repairs);\nconst cashOnCash = Number((annualCashFlow / cashInvested * 100).toFixed(2));\n\nconst scenario = (name, arvFactor, repairFactor, rentFactor, rateDelta) => {\n  const scenarioArv = Math.round(arv * arvFactor);\n  const scenarioRepairs = Math.round(repairs * repairFactor);\n  const scenarioValueSpread = scenarioArv - purchase - scenarioRepairs;\n  const scenarioRent = monthlyRent * rentFactor;\n  const scenarioNOI = Math.round((scenarioRent * 12 * (1 - vacancyPct)) - (annualTaxes + annualInsurance + monthlyHoa * 12 + scenarioRent * 12 * maintenancePct));\n  const scenarioDebt = annualDebtService * (1 + rateDelta);\n  return { name, arv: scenarioArv, repairs: scenarioRepairs, monthlyRent: Math.round(scenarioRent), netEquitySpread: scenarioValueSpread, capRate: purchase > 0 ? Number((scenarioNOI / purchase * 100).toFixed(2)) : null, dscr: scenarioDebt > 0 ? Number((scenarioNOI / scenarioDebt).toFixed(2)) : null };\n};\n\nconst scenarios = [\n  scenario('downside', 0.90, 1.20, 0.90, 0.10),\n  scenario('base', 1.00, 1.00, 1.00, 0),\n  scenario('upside', 1.08, 0.90, 1.05, -0.05),\n];\nconst risks = [];\nif (!arv || deal.arvConfidence === 'Low') risks.push({ severity: 'high', code: 'weak_arv', message: 'ARV is unavailable or based on low-confidence market data.' });\nif (scenarios[0].netEquitySpread <= 0) risks.push({ severity: 'high', code: 'downside_loss', message: 'Downside flip scenario has no projected equity spread.' });\nif (strategy === 'long_term_rental' || strategy === 'brrrr') {\n  if (!monthlyRent) risks.push({ severity: 'high', code: 'missing_rent', message: 'Rental strategy needs a verified market-rent input.' });\n  if (dscr !== null && dscr < 1.20) risks.push({ severity: 'high', code: 'low_dscr', message: 'Base-case DSCR is below the 1.20 underwriting threshold.' });\n  if (capRate !== null && capRate < 5) risks.push({ severity: 'medium', code: 'low_cap_rate', message: 'Base-case cap rate is below 5%.' });\n}\nif (repairs > arv * 0.25) risks.push({ severity: 'medium', code: 'high_rehab', message: 'Repair budget exceeds 25% of estimated ARV.' });\nif (!deal.medianHomeValue) risks.push({ severity: 'medium', code: 'missing_market_context', message: 'No Census market-value context was returned.' });\nif (!deal.idempotencyKey) risks.push({ severity: 'medium', code: 'duplicate_check_missing', message: 'No idempotency key is present; duplicate submissions cannot be safely identified.' });\n\nconst downside = scenarios[0];\nconst recommendation = risks.some((risk) => risk.severity === 'high') ? 'reject_or_reprice' : downside.netEquitySpread > 0 ? 'review' : 'hold';\nreturn { json: { ...deal, strategyMode: strategy, rentalMetrics: { annualGrossRent, effectiveGrossIncome: Math.round(effectiveGrossIncome), annualOperatingExpenses: Math.round(annualOperatingExpenses), noi, capRate, dscr, annualCashFlow, cashOnCash }, scenarios, riskRegister: risks, recommendation, humanReviewRequired: true, reviewStatus: 'Under Review', auditTrail: [{ stage: 'scenario_risk_engine', at: new Date().toISOString(), strategyMode: strategy, recommendation }] } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "scenario-risk-code",
+      "name": "Build Scenarios & Risk Register"
+    }
+  ],
+  "connections": {
+    "Math In": {"main": [[{"node": "Build Scenarios & Risk Register", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"}
+}

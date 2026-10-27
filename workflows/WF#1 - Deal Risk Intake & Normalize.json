@@ -1,0 +1,28 @@
+{
+  "name": "WF#1 - Deal Risk Intake & Normalize",
+  "nodes": [
+    {
+      "parameters": {"inputSource": "passthrough"},
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [-320, 0],
+      "id": "deal-lens-intake-trigger",
+      "name": "Lead In"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Versioned Deal Risk lead contract. The idempotencyKey is stable across retries.\nconst input = $input.item.json;\nconst lead = input.body ?? input;\nconst num = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(String(v).replace(/[^0-9.\\-]/g, '')); return Number.isFinite(n) ? n : null; };\nconst text = (v) => (v ?? '').toString().trim();\nconst address = text(lead.address); const city = text(lead.city); const state = text(lead.state).toUpperCase(); const zip = text(lead.zip);\nconst strategyMode = text(lead.strategyMode || 'fix_and_flip').toLowerCase().replace(/\\s+/g, '_');\nconst allowedStrategies = ['fix_and_flip', 'long_term_rental', 'brrrr', 'wholesale'];\nconst sqft = num(lead.sqft); const yearBuilt = num(lead.yearBuilt); const askingPrice = num(lead.askingPrice);\nconst monthlyRent = num(lead.monthlyRent); const annualTaxes = num(lead.annualTaxes); const annualInsurance = num(lead.annualInsurance); const monthlyHoa = num(lead.monthlyHoa);\nconst errors = [];\nif (!address) errors.push('address is required'); if (!city) errors.push('city is required'); if (!/^[A-Z]{2}$/.test(state)) errors.push('state must be a 2-letter code'); if (!/^\\d{5}(-\\d{4})?$/.test(zip)) errors.push('zip must be 5 or 9 digits'); if (!sqft || sqft <= 0) errors.push('sqft must be positive'); if (!yearBuilt || yearBuilt < 1800 || yearBuilt > 2100) errors.push('yearBuilt looks invalid'); if (!askingPrice || askingPrice <= 0) errors.push('askingPrice must be positive'); if (!allowedStrategies.includes(strategyMode)) errors.push('strategyMode must be fix_and_flip, long_term_rental, brrrr, or wholesale');\nif (['long_term_rental', 'brrrr'].includes(strategyMode) && (!monthlyRent || monthlyRent <= 0)) errors.push('monthlyRent is required for rental strategies');\nif (errors.length) throw new Error('Validation failed: ' + errors.join('; '));\nconst normalizedAddress = `${address}, ${city}, ${state} ${zip}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');\nconst idempotencyKey = [normalizedAddress, Math.round(askingPrice), strategyMode].join('|');\nconst receivedAt = new Date().toISOString();\nreturn { json: { runId: `${normalizedAddress}-${Date.now()}`.slice(0, 100), idempotencyKey, receivedAt, normalizedAddress, address, city, state, zip, oneLineAddress: `${address}, ${city}, ${state} ${zip}`, beds: num(lead.beds), baths: num(lead.baths), sqft, yearBuilt, propertyAgeYears: new Date().getFullYear() - yearBuilt, askingPrice, condition: text(lead.condition || 'unknown').toLowerCase(), notes: text(lead.notes), strategyMode, monthlyRent, annualTaxes, annualInsurance, monthlyHoa, vacancyPct: num(lead.vacancyPct), maintenancePct: num(lead.maintenancePct), holdingMonths: num(lead.holdingMonths) } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [0, 0],
+      "id": "deal-lens-normalize-code",
+      "name": "Validate, Normalize & Fingerprint"
+    }
+  ],
+  "connections": {
+    "Lead In": {"main": [[{"node": "Validate, Normalize & Fingerprint", "type": "main", "index": 0}]]}
+  },
+  "active": false,
+  "settings": {"executionOrder": "v1"}
+}
